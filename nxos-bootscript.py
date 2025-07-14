@@ -17,17 +17,18 @@ import syslog
 from cli import *
 
 REMOTE_SERVER = "192.168.9.63"
-HOSTNAME = ("ncl60-sc-a6-r1")
+HOSTNAME = "***REDACTED***"
 
 CONFIG_PATH = "bootflash:"
 CONFIG_FILE = "%s.cfg" % HOSTNAME
 CONFIG_PROTOCOL = "tftp"
 FIRMWARE_PATH = "bootflash:"
-FIRMWARE_FILE = "nxos.9.3.8.bin"
-#FIRMWARE_FILE = "nxos.9.3.11.bin"
+#FIRMWARE_FILE = "nxos.9.3.8.bin"
+FIRMWARE_FILE = "nxos.9.3.11.bin"
 FIRMWARE_PROTOCOL = "http"
 VRF = "management"
 MD5_SRC_EXT = ".md5"
+
 
 
 MAX_RETRIES = 3
@@ -58,7 +59,7 @@ def setup_logging():
     poap_script_log = "/bootflash:%s_poap_%s_script.log" % (strftime("%Y%m%d%H%M%S", gmtime()),
                                                             os.environ['POAP_PID'])
     log_hdl = open(poap_script_log, "w+")
-    poap_log("Logfile name: %s" % poap_script_log)
+    poap_log("INFO: Logfile name: %s" % poap_script_log)
     poap_cleanup_script_logs()
 
 
@@ -68,7 +69,7 @@ def poap_cleanup_script_logs():
     recent 4 files.
     """
     file_list = sorted(glob.glob(os.path.join("/bootflash", '*poap*script.log')), reverse=True)
-    poap_log("Found %d POAP script logs" % len(file_list))
+    poap_log("INFO: Found %d POAP script logs" % len(file_list))
     logs_for_removal = file_list[4:]
     for old_log in logs_for_removal:
         remove_file(old_log)
@@ -119,8 +120,8 @@ def poap_log(info):
 
 
 def check_system_health():
-    for i in range(MAX_RETRIES):
-        poap_log("INFO: check_system_health attempt %d" % (i + 1))
+    for attempt in range(MAX_RETRIES):
+        poap_log("INFO: check_system_health (attempt %d/%d)" % ((attempt + 1), MAX_RETRIES))
         try:
             # Get model information
             model_output = cli("show version | grep 'cisco Nexus'")
@@ -165,13 +166,15 @@ def tftp_copy(tftp_server=REMOTE_SERVER, config_filename=CONFIG_FILE, dest="vola
     """
     Copies the config file provided from tftp source to destination.
     """
-    poap_log("Transfering using TFTP from %s %s to %s" % (tftp_server, config_filename, dest))
+    poap_log("INFO: Transferring config file using TFTP from %s %s to %s" % (tftp_server, config_filename, dest))
     base_tftp_copy_cmd = "copy tftp://%s/%s %s" % (tftp_server, config_filename, dest)
     tftp_copy_cmd = base_tftp_copy_cmd + " vrf default"
-    poap_log("TFTP copy command is : %s" % tftp_copy_cmd)
+    poap_log("INFO: TFTP copy command is : %s" % tftp_copy_cmd)
     try:
         cli(tftp_copy_cmd)
-        poap_log("Config transfer successful")
+        poap_log("NOTICE: Config transfer successful")
+
+        #### change for test
         return True
     except Exception as e:
         if "no such file" in str(e):
@@ -185,25 +188,44 @@ def tftp_copy(tftp_server=REMOTE_SERVER, config_filename=CONFIG_FILE, dest="vola
     return False
 
 
-def file_copy(filename="volatile:poap.cfg"):
+def file_copy(compliance, filename="volatile:poap.cfg"):
     """
     Copies the config file provided from local source to scheduled config.
     """
-    poap_log("Moving config into scheduled config %s" % (filename))
-    try:
-        cli("copy running-config startup-config")
-        cli("copy %s scheduled-config" % filename)
-        return True
-    except Exception as e:
-        if "no such file" in str(e):
-            poap_log("ABORT: Copy of %s failed: no such file" % filename)
-        elif "Permission denied" in str(e):
-            poap_log("ABORT: Copy of %s failed: permission denied" % filename)
-        elif "No space left on device" in str(e):
-            poap_log("ABORT: Copy failed: No space left on device")
-        else:
-            poap_log("ABORT: Copy failed: %s" % str(e))
-    return False
+    
+    if not compliance:
+        poap_log("INFO: Transferring new config into scheduled config %s" % (filename))
+        try:
+            cli("copy running-config startup-config")
+            cli("copy %s scheduled-config" % filename)
+            return True
+        except Exception as e:
+            if "no such file" in str(e):
+                poap_log("ABORT: Copy of %s failed: no such file" % filename)
+            elif "Permission denied" in str(e):
+                poap_log("ABORT: Copy of %s failed: permission denied" % filename)
+            elif "No space left on device" in str(e):
+                poap_log("ABORT: Copy failed: No space left on device")
+            else:
+                poap_log("ABORT: Copy failed: %s" % str(e))
+        return False
+    else:
+        poap_log("INFO: Transferring new config to starting config %s" % (filename))
+        try:
+            cli("copy %s run" % filename)
+            cli("copy run start")
+            return True
+        except Exception as e:
+            if "no such file" in str(e):
+                poap_log("ABORT: Copy of %s failed: no such file" % filename)
+            elif "Permission denied" in str(e):
+                poap_log("ABORT: Copy of %s failed: permission denied" % filename)
+            elif "No space left on device" in str(e):
+                poap_log("ABORT: Copy failed: No space left on device")
+            else:
+                poap_log("ABORT: Copy failed: %s" % str(e))
+        return False
+
 
 ###########################################
 # *** Firmware checks and installation ***
@@ -212,7 +234,7 @@ def file_copy(filename="volatile:poap.cfg"):
 
 def http_download(url, dest):
     """
-    Copies the config file provided from tftp source to destination.
+    Copies the config file provided from http source to destination.
     """
     config_filename = CONFIG_FILE
     poap_log("INFO: Transferring using HTTP from %s to %s" % (url, dest))
@@ -248,7 +270,7 @@ def get_current_version():
         else:
             raise Exception("Failed to parse version string: %s" % version)
     except Exception as e:
-        poap_log("Failed to get current version: %s" % str(e))
+        poap_log("WARNING: Failed to get current version: %s" % str(e))
         return None
 
 
@@ -257,21 +279,21 @@ def evaluate_version_compliance():
     Verifies if the current firmware version matches the target version
     Returns True if versions match or if upgrade is successful
     """
-    for i in range(MAX_RETRIES):
-        poap_log("INFO: evaluate_version_compliance attempt %d" % (i + 1))
+    for attempt in range(MAX_RETRIES):
+        poap_log("INFO: evaluate_version_compliance (attempt %d/%d)" % ((attempt + 1), MAX_RETRIES))
         try:
             current_version = get_current_version()
             if not current_version:
                 raise Exception("Could not find current version")
             if current_version == TARGET_VERSION:
                 poap_log("INFO: Firmware version %s matches target version" % current_version)
-                poap_log("INFO: Device firmware is compliant")
+                poap_log("NOTICE: Device firmware is compliant")
                 return True
             #Passes checks and assumes firmware is not compliant, so returns False
-            poap_log("INFO: Firmware upgrade needed. Current: %s, Target: %s" % (current_version, TARGET_VERSION))
+            poap_log("NOTICE: Firmware upgrade needed. Current: %s, Target: %s" % (current_version, TARGET_VERSION))
             return False
         except Exception as e:
-            poap_log("Evaluate version compliance failed: %s" % str(e))
+            poap_log("WARNING: Evaluate version compliance failed: %s" % str(e))
     
     #Attempts to find version info exhausted, so proceed under assumption that an upgrade is required
     poap_log("WARNING: evaluate_version_compliance attempts failed - proceed with firmware upgrade")
@@ -289,65 +311,64 @@ def file_exists(filename):
 
 def upgrade_firmware():
     """
-    Upgrades the firmware to the target version
+    Downloads of confirms local instance of target firmware version and verifies it 
     """
     poap_log("INFO: upgrade_firmware initiated")
     firmware_file = FIRMWARE_FILE
     http_server = REMOTE_SERVER
 
-    for attempt in range(MAX_RETRIES):
-        poap_log("INFO: Upgrade attempt %d/%d" % (attempt, MAX_RETRIES))
-
-        if file_exists(firmware_file):
-                poap_log("INFO: Compliant image is stored locally. Skipping download. Verifying...")
-                if verify_firmware_image(firmware_file):
-                    poap_log("INFO: Existing firmware file verified successfully")
-                    return True
-                else:
-                    poap_log("INFO: Existing firmware file verification failed")
-                    if not cleanup_image(firmware_file):
-                        return False
-
-        poap_log("INFO: Downloading firmware from HTTP server")
-        for download_attempt in range(MAX_RETRIES):
-            try:
-                firmware_url = "http://%s/n9k/%s" % (http_server, firmware_file)
-                dest_path = "bootflash:%s" % (firmware_file)
-                if http_download(firmware_url, dest_path):
-                    poap_log("INFO: Firmware download successful. Verifying...")
-                    if verify_firmware_image(firmware_file):
-                        poap_log("INFO: Firmware verified successfully. Firmware upgrade successful")
-                        return True
-                    else: 
-                        poap_log("WARNING: Download file verification failed")
-                        cleanup_image(firmware_file)
-                else:
-                    poap_log("ERROR: Download failed")
-            except Exception as e:
-                poap_log("ERROR: Download attempt failed: %s" % str(e))
-                if file_exists(firmware_file):
-                    cleanup_image(firmware_file)
-            if download_attempt < MAX_RETRIES - 1:
-                poap_log("INFO: Retrying download...")
+    if file_exists(firmware_file):
+        poap_log("INFO: Firmware upgrade (attempt %d/%d)" % ((attempt + 1), MAX_RETRIES))
+        for attempt in range(MAX_RETRIES):
+            poap_log("INFO: Compliant image is stored locally. Skipping download. Verifying...")
+            if verify_firmware_image(firmware_file):
+                poap_log("NOTICE: Existing firmware file verified successfully")
+                return True
             else:
-                poap_log("ERROR: All download attempts failed")
+                poap_log("WARNING: Existing firmware file verification failed")
+                cleanup_image(firmware_file)
+                    
+            if attempt < MAX_RETRIES - 1:
+                poap_log("INFO: Retrying upgrade process...")         
+            else:
+                poap_log("ERROR: Firmware upgrade failed after all attempts")
+                return False
 
-        if attempt < MAX_RETRIES - 1:
-            poap_log("INFO: Retrying entire upgrade process...")         
+
+    poap_log("INFO: Downloading firmware from HTTP server")
+    for download_attempt in range(MAX_RETRIES):
+        try:
+            firmware_url = "http://%s/n9k/%s" % (http_server, firmware_file)
+            dest_path = "bootflash:%s" % (firmware_file)
+            if http_download(firmware_url, dest_path):
+                poap_log("NOTICE: Firmware download successful. Verifying...")
+                if verify_firmware_image(firmware_file):
+                    poap_log("NOTICE: Firmware verified successfully. Firmware upgrade successful")
+                    return True
+                else: 
+                    poap_log("WARNING: Download file verification failed")
+                    cleanup_image(firmware_file)
+            else:
+                poap_log("ERROR: Download failed")
+        except Exception as e:
+            poap_log("ERROR: Download attempt failed: %s" % str(e))
+            if file_exists(firmware_file):
+                cleanup_image(firmware_file)
+
+        if download_attempt < MAX_RETRIES - 1:
+            poap_log("INFO: Retrying download...")
         else:
-            poap_log("ERROR: Firmware upgrade failed after all attempts")
-
-        return False
+            poap_log("ERROR: All download attempts failed")
+    return False
         
-
 def cleanup_image(firmware_file):
     """Deletes firmware file from local storage"""
     for i in range(MAX_RETRIES):
         poap_log("INFO: Deleting image from local storage (attempt %d/%d)" % ((i + 1), MAX_RETRIES))
         try:
-            cli("delete flash:%s" % firmware_file)
+            cli("delete bootflash:%s" % firmware_file)
             if not file_exists(firmware_file):
-                poap_log("INFO: Successfully deleted %s" % firmware_file)
+                poap_log("NOTICE: Successfully deleted %s" % firmware_file)
                 return True
             poap_log("WARNING: File still exists after delete attempt")
         except Exception as e:
@@ -355,27 +376,71 @@ def cleanup_image(firmware_file):
     return False
 
 def verify_firmware_image(filename):
-    """Verify firmware image MD5 hash"""
-
-    try:
-        poap_log("INFO: Verifying firmware image")
-        md5_src = get_src_md5(filename)
-        md5_dst = get_dst_md5(filename)
-
-        if md5_src != md5_dst:
-            poap_log("WARNING: Source and destination MD5 comparison failed")
-            return False
-        
-        poap_log("INFO: MD5 verification successful")
-        return True
-    except Exception as e:
-        poap_log("ERROR: Firmware verfication failed: %s" % str(e))
+    src_md5 = get_src_md5(filename)
+    if not src_md5:
+        poap_log("ERROR: Could not get source MD5")
+        return False
+    
+    dst_md5 = get_dst_md5(filename)
+    if not dst_md5:
+        poap_log("ERROR: Could not get destination MD5")
         return False
 
+    #return src_md5 == dst_md5
+    return False
+
 def get_src_md5(filename):
+    """
+    Gets MD5 from .md5 file on HTTP server
+    """
+    try:
+        # Construct file names
+        md5_file = "%s.md5" % filename
+        temp_md5_file = "volatile:%s.md5" % filename
+        md5_url = "http://%s/n9k/%s" % (REMOTE_SERVER, md5_file)
+
+        poap_log("INFO: Downloading MD5 file from %s" % md5_url)
+        
+        # Download MD5 file using existing http_download method
+        if not http_download(md5_url, temp_md5_file):
+            poap_log("ERROR: Failed to download MD5 file")
+            return None
+
+        try:
+            # Read the MD5 from the downloaded file
+            md5_output = cli("show file %s" % temp_md5_file)
+            md5_hash = md5_output.strip().split()[0]  # Get first word (the hash)
+            
+            if len(md5_hash) == 32:  # Valid MD5 is 32 characters
+                poap_log("INFO: Source MD5: %s" % md5_hash)
+                return md5_hash
+            else:
+                poap_log("ERROR: Invalid MD5 format in downloaded file")
+                return None
+
+        finally:
+            # Cleanup temp file
+            try:
+                cli("delete %s force" % temp_md5_file)
+            except:
+                pass
+
+    except Exception as e:
+        poap_log("ERROR: Failed to get source MD5: %s" % str(e))
+        return None
+
+
 
 
 def get_dst_md5(filename):
+    """Gets MD5 hash of downloaded file"""
+    try:
+        md5_output = cli("show file bootflash:%s md5sum" % filename)
+        poap_log("INFO: Destination MD5: %s" % md5_output.strip())
+        return md5_output.strip()
+    except Exception as e:
+        poap_log("ERROR: Failed to get destination MD5: %s" % str(e))
+        raise
 
 
 def install_firmware_image():
@@ -387,7 +452,7 @@ def install_firmware_image():
             poap_log("INFO: Setting new image as boot variable to running-configuration")
             poap_log("CLI command: config terminal ; boot nxos %s" % system_image_dst)
             cli("config terminal ; boot nxos %s" % system_image_dst) # applies to running config only
-            poap_log("INFO: Successfully set new image as boot variable to running-configuration")
+            poap_log("NOTICE: Successfully set new image as boot variable to running-configuration")
 
             # TODO: TEST CASE does adding non- line improve or worsen? 
             #   non-disruptive    Performs an in-service software upgrade (ISSU) to prevent the disruption of data traffic.
@@ -400,28 +465,33 @@ def install_firmware_image():
     return False
 
 
-def apply_config_with_retries(max_retries=5, retry_delay=15):
+def apply_config_with_retries(compliance, retry_delay=15):
     """
     Apply configuration with retries after image upgrade and reboot
     """
-    try:
-        # Try tftp copy
-        if tftp_copy():
-            # if tftp successful, try file copy
-            if file_copy():
-                poap_log("NOTICE: Configuration applied successfully")
-                return True
+    for attempt in range(MAX_RETRIES):
+        poap_log("INFO: Configuration application (attempt %d/%d)" % ((attempt + 1), MAX_RETRIES))
+        try:
+            # Try tftp copy
+            if tftp_copy():
+                # if tftp successful, try file copy
+                if file_copy(compliance):
+                    poap_log("NOTICE: Configuration applied successfully")
+                    return True
+                else:
+                    raise Exception("ERROR: Failed to copy scheduled_config")
             else:
-                poap_log("ERROR: Failed to copy scheduled_config")
-        else:
-            poap_log("ERROR: TFTP copy failed")
+                raise Exception("ERROR: TFTP copy failed")
 
-        poap_log("INFO: Sleeping %s seconds before retry" % str(retry_delay))
-        sleep(retry_delay)
+        except Exception as e:
+            poap_log("ERROR: Unexpected error during config:  %s" % str(e))
+            if attempt + 1 < MAX_RETRIES:
+                poap_log("INFO: reattempt in %d seconds" % retry_delay)
+                sleep(retry_delay)
 
-    except Exception as e:
-        poap_log("ERROR: Unexpected error during config:  %s" % str(e))
     poap_log("ERROR: Configuration failed - max retries exceeded")
+    cli("write erase")
+    exit(-1)
     return False
 
 
@@ -456,30 +526,31 @@ def main():
 
     # Configure the logging for the POAP process
     setup_logging()
-    poap_log("Logging Setup")
+    poap_log("NOTICE: Logging Setup")
 
     # Verify system health
     if not check_system_health():
-        poap_log("ABORT: System health check failed")
+        poap_log("ERROR: System health check failed")
         exit(-1)
-    poap_log("INFO: System health check successful")
+    poap_log("NOTICE: System health check successful")
     
-    # Verify and upgrade firmware if needed
+    # Upgrade firmware path: upgrade, verify, install, apply config
     if not evaluate_version_compliance():
-        if not upgrade_firmware():
-                exit(-1)
-        
-        if not install_firmware_image():
-            exit(-1)
-        exit (-1)
-    exit(-1)
+        if upgrade_firmware():
+            if install_firmware_image():
+                if apply_config_with_retries(compliance = False):
+                    poap_log("NOTICE: POAP completed successfully")
+                    poap_log("NOTICE: Will reboot with new image and apply configuration - Exit(0)")
+                    log_hdl.close()
+                    exit(0)
 
-    if not apply_config_with_retries():
+
+    # No firmware upgrade path: transfer configuration and apply
+    if not apply_config_with_retries(compliance = True):
         poap_log("ERROR: Configuration failed")
         exit(-1)
-    
 
-    poap_log("NOTICE: POAP completed successfully")
+    poap_log("NOTICE: POAP completed successfully - exit(1)")
     log_hdl.close()
     exit(0)
 
