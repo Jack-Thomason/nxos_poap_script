@@ -1,5 +1,5 @@
 #!/bin/env python
-#md5sum="9cd4c9cf3e42e60bed67c22806e9d685"
+#md5sum="621ddd9c30670c4e71a75f82455917f1"
 
 # Return Values:
 # 0 : Reboot and reapply configuration
@@ -17,7 +17,7 @@ import syslog
 from cli import *
 
 REMOTE_SERVER = "192.168.9.63"
-HOSTNAME = "***REDACTED***"
+HOSTNAME = "{hostname}"
 
 CONFIG_PATH = "bootflash:"
 CONFIG_FILE = "%s.cfg" % HOSTNAME
@@ -120,6 +120,10 @@ def poap_log(info):
 
 
 def check_system_health():
+    """
+    Conducts system health checks: version, model, storage capacity 
+    (in the event the firmware image transfer must be executed)
+    """
     for attempt in range(MAX_RETRIES):
         poap_log("INFO: check_system_health (attempt %d/%d)" % ((attempt + 1), MAX_RETRIES))
         try:
@@ -362,7 +366,9 @@ def upgrade_firmware():
     return False
         
 def cleanup_image(firmware_file):
-    """Deletes firmware file from local storage"""
+    """
+    Deletes firmware file from local storage
+    """
     for i in range(MAX_RETRIES):
         poap_log("INFO: Deleting image from local storage (attempt %d/%d)" % ((i + 1), MAX_RETRIES))
         try:
@@ -376,6 +382,9 @@ def cleanup_image(firmware_file):
     return False
 
 def verify_firmware_image(filename):
+    """
+    Conducts image verification test
+    """
     src_md5 = get_src_md5(filename)
     if not src_md5:
         poap_log("ERROR: Could not get source MD5")
@@ -431,9 +440,10 @@ def get_src_md5(filename):
 
 
 
-
 def get_dst_md5(filename):
-    """Gets MD5 hash of downloaded file"""
+    """
+    Gets MD5 hash of downloaded file
+    """
     try:
         md5_output = cli("show file bootflash:%s md5sum" % filename)
         poap_log("INFO: Destination MD5: %s" % md5_output.strip())
@@ -444,6 +454,9 @@ def get_dst_md5(filename):
 
 
 def install_firmware_image():
+    """
+    Attempts boot variable set with 3 retries
+    """
     firmware_file = FIRMWARE_FILE
     system_image_dst = "%s" % firmware_file
     for i in range(MAX_RETRIES):
@@ -543,13 +556,19 @@ def main():
                     poap_log("NOTICE: Will reboot with new image and apply configuration - Exit(0)")
                     log_hdl.close()
                     exit(0)
-
+                else:
+                    poap_log("ERROR: Restarting POAP due to config error")
+                    exit(-1)
+            else:
+                exit(-1)
+        else:
+            exit(-1)
 
     # No firmware upgrade path: transfer configuration and apply
     if not apply_config_with_retries(compliance = True):
         poap_log("ERROR: Configuration failed")
         exit(-1)
-
+    # this behaviour is not as expected
     poap_log("NOTICE: POAP completed successfully - exit(1)")
     log_hdl.close()
     exit(0)
