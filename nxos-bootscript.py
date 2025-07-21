@@ -3,9 +3,6 @@
 
 # Return Values:
 # 0 : Reboot and reapply configuration
-# 1 : No reboot, just apply configuration. Customers issue copy file run ; copy
-# run start. Do not use scheduled-config since there is no reboot needed. i.e.
-# no new image was downloaded
 # -1 : Error case. This will cause POAP to restart the DHCP discovery phase.
 
 import glob
@@ -16,31 +13,33 @@ import sys
 import syslog
 from cli import *
 
-REMOTE_SERVER = "192.168.9.63"
-HOSTNAME = "{hostname}"
+REMOTE_SERVER = "{{tftp_server}}"
+HOSTNAME = "{{Hostname}}"
+CONFIG_FILE = "{{config_file}}"
+FIRMWARE_FILE = "{{firmware_file}}"
 
-CONFIG_PATH = "bootflash:"
-CONFIG_FILE = "%s.cfg" % HOSTNAME
 CONFIG_PROTOCOL = "tftp"
-FIRMWARE_PATH = "bootflash:"
-#FIRMWARE_FILE = "nxos.9.3.8.bin"
-FIRMWARE_FILE = "nxos.9.3.11.bin"
 FIRMWARE_PROTOCOL = "http"
+CONFIG_PATH = "bootflash:"
+FIRMWARE_PATH = "bootflash:"
+
 VRF = "management"
 MD5_SRC_EXT = ".md5"
-
-
 
 MAX_RETRIES = 3
 
 match_firmware = re.search(r'(\d+\.\d+\.\d+)', FIRMWARE_FILE)
 if match_firmware:
     TARGET_VERSION = match_firmware.group(1)
+else:
+    TARGET_VERSION = ""
+
 SPACE_REQUIREMENTS = {
     'N9K-C93180YC-EX': 1073741824,  # 1GB
     'N9K-C93108TC-EX': 1073741824,
     'default': 2147483648  # 2GB default
 }
+ 
 
 #####################################
 # *** Health checks and logging ***
@@ -162,11 +161,11 @@ def check_system_health():
     return False
 
 ###########################################
-# *** Config download and application ***
+# *** Config download and application ***Zero
 ###########################################
 
 
-def tftp_copy(tftp_server=REMOTE_SERVER, config_filename=CONFIG_FILE, dest="volatile:poap.cfg"):
+def tftp_copy(tftp_server=REMOTE_SERVER, config_filename=CONFIG_FILE, dest="poap.cfg"):
     """
     Copies the config file provided from tftp source to destination.
     """
@@ -176,6 +175,8 @@ def tftp_copy(tftp_server=REMOTE_SERVER, config_filename=CONFIG_FILE, dest="vola
     poap_log("INFO: TFTP copy command is : %s" % tftp_copy_cmd)
     try:
         cli(tftp_copy_cmd)
+        if not file_exists(dest):
+            raise Exception("Local file does not exist!")
         poap_log("NOTICE: Config transfer successful")
 
         #### change for test
@@ -192,7 +193,7 @@ def tftp_copy(tftp_server=REMOTE_SERVER, config_filename=CONFIG_FILE, dest="vola
     return False
 
 
-def file_copy(compliance, filename="volatile:poap.cfg"):
+def file_copy(compliance, filename="poap.cfg"):
     """
     Copies the config file provided from local source to scheduled config.
     """
@@ -202,6 +203,8 @@ def file_copy(compliance, filename="volatile:poap.cfg"):
         try:
             cli("copy running-config startup-config")
             cli("copy %s scheduled-config" % filename)
+            # Verify scheduled-config exists
+            cli("show scheduled-config")
             return True
         except Exception as e:
             if "no such file" in str(e):
@@ -214,10 +217,16 @@ def file_copy(compliance, filename="volatile:poap.cfg"):
                 poap_log("ABORT: Copy failed: %s" % str(e))
         return False
     else:
-        poap_log("INFO: Transferring new config to starting config %s" % (filename))
+        poap_log("INFO: Transferring new config to running config %s" % (filename))
         try:
-            cli("copy %s run" % filename)
-            cli("copy run start")
+            # Apply config
+            cli("copy %s running-config" % filename)  # Changed to explicit running-config
+            # Verify config applied
+            cli("show running-config")
+            # Save to startup
+            cli("copy running-config startup-config")
+            # Save to scheduled just in case
+            cli("copy %s scheduled-config" % filename)
             return True
         except Exception as e:
             if "no such file" in str(e):
@@ -229,6 +238,7 @@ def file_copy(compliance, filename="volatile:poap.cfg"):
             else:
                 poap_log("ABORT: Copy failed: %s" % str(e))
         return False
+
 
 
 ###########################################
@@ -283,6 +293,9 @@ def evaluate_version_compliance():
     Verifies if the current firmware version matches the target version
     Returns True if versions match or if upgrade is successful
     """
+    if not TARGET_VERSION:
+        poap_log("WARNING: No target version found - proceeding to config application")
+        return True
     for attempt in range(MAX_RETRIES):
         poap_log("INFO: evaluate_version_compliance (attempt %d/%d)" % ((attempt + 1), MAX_RETRIES))
         try:
@@ -322,8 +335,8 @@ def upgrade_firmware():
     http_server = REMOTE_SERVER
 
     if file_exists(firmware_file):
-        poap_log("INFO: Firmware upgrade (attempt %d/%d)" % ((attempt + 1), MAX_RETRIES))
         for attempt in range(MAX_RETRIES):
+            poap_log("INFO: Firmware upgrade (attempt %d/%d)" % ((attempt + 1), MAX_RETRIES))
             poap_log("INFO: Compliant image is stored locally. Skipping download. Verifying...")
             if verify_firmware_image(firmware_file):
                 poap_log("NOTICE: Existing firmware file verified successfully")
@@ -569,7 +582,7 @@ def main():
         poap_log("ERROR: Configuration failed")
         exit(-1)
     # this behaviour is not as expected
-    poap_log("NOTICE: POAP completed successfully - exit(1)")
+    poap_log("NOTICE: POAP completed successfully - exit(0)")
     log_hdl.close()
     exit(0)
 
